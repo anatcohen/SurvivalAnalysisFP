@@ -6,7 +6,7 @@ def load_and_preprocess(path):
     """
     Loads tabular data of clinical records and preprocess it.
     """
-    raw_data = pd.read_csv('data/clinical_data.csv')
+    raw_data = pd.read_csv('../data/clinical_data.csv')
 
     df = pd.DataFrame()
     df['id'] = raw_data['Case ID']
@@ -35,7 +35,7 @@ def load_and_preprocess(path):
 
 
 if __name__ == '__main__':
-    path = 'data/clinical_data.csv'
+    path = '../data/clinical_data.csv'
     df = load_and_preprocess(path)
     pd.set_option('display.width', None)
     print(df.head())

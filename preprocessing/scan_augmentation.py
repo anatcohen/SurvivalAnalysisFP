@@ -108,7 +108,7 @@ if __name__ == '__main__':
     import cv2
     from matplotlib import pyplot as plt
 
-    img = cv2.imread("data/jap.png")
+    img = cv2.imread("../data/jap.png")
     plt.imshow(img)
     plt.show()
     plt.imshow(rotate_ct_scan(img, (0, 90)))
