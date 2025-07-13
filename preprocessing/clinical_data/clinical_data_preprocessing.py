@@ -6,31 +6,25 @@ def load_and_preprocess(path):
     """
     Loads tabular data of clinical records and preprocess it.
     """
-    raw_data = pd.read_csv('../../data/clinical_data.csv')
-
-    df = pd.DataFrame()
-    df['id'] = raw_data['Case ID']
-    df['time_to_death'] = raw_data['Time to Death (days)']
-
-    # Impute missing data
-    df['age'] = raw_data['Age at Histological Diagnosis'].fillna(raw_data['Age at Histological Diagnosis'].mean())
+    # Load data
+    raw_data = pd.read_csv(path)
 
     # One-hot encode categorical data
-    df['is_male'] = raw_data['Gender'] == 'Male'
-    df['is_alive'] = raw_data['Survival Status'] == 'Alive'
-    df = pd.concat([df,
-                    pd.get_dummies(raw_data['Pathological T stage'], prefix='path_T_stage'),
-                    pd.get_dummies(raw_data['Pathological N stage'], prefix='path_N_stage'),
-                    pd.get_dummies(raw_data['Pathological M stage'], prefix='path_M_stage'),
-                    pd.get_dummies(raw_data['Histology '], prefix='histology'),
-                    pd.get_dummies(raw_data['Smoking status'], prefix='smoking_status'),
-                    pd.get_dummies(raw_data['Ethnicity'], prefix='ethnicity'),
-                    pd.get_dummies(raw_data['Histopathological Grade'], prefix='hist_grade')], axis=1)
+    df = pd.concat([raw_data, pd.get_dummies(raw_data['Overall.Stage'], prefix='stage'),
+                    pd.get_dummies(raw_data['Histology'], prefix='histology'),
+                    pd.get_dummies(raw_data['clinical.T.Stage'], prefix='T.stage'),
+                    pd.get_dummies(raw_data['Clinical.N.Stage'], prefix='N.stage'),
+                    pd.get_dummies(raw_data['Clinical.M.Stage'], prefix='M.stage')],
+                   axis=1)
+    df['is_male'] = df['gender'] == 'male'
+    df.drop(columns=['gender', 'Overall.Stage', 'Histology', 'clinical.T.Stage', 'Clinical.N.Stage', 'Clinical.M.Stage'], inplace=True)
+
+    # Impute missing data
+    df['age'] = df['age'].fillna(df['age'].mean())
 
     # Normalise data
-    cont_cols = ['age', 'time_to_death']
-    df[cont_cols] = (df[cont_cols] - df[cont_cols].mean()) / np.sqrt(df[cont_cols].var())
-
+    cont_data = ['age']
+    df[cont_data] = (df[cont_data] - df[cont_data].mean()) / df[cont_data].std()
     return df
 
 
