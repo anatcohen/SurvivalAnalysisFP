@@ -37,4 +37,5 @@ def load_and_preprocess(path):
 if __name__ == '__main__':
     path = 'data/clinical_data.csv'
     df = load_and_preprocess(path)
-    print(1)
+    pd.set_option('display.width', None)
+    print(df.head())
