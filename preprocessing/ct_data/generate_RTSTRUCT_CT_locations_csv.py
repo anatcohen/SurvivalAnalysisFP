@@ -90,8 +90,8 @@ def process_medical_csv(input_file, output_file):
 
 # Example usage
 if __name__ == "__main__":
-    input_file = "../data/CT_metadata.csv"
-    output_file = "../data/CT_RTSTRUCT_locations.csv"
+    input_file = "../../data/CT_metadata.csv"
+    output_file = "../../data/CT_RTSTRUCT_locations.csv"
 
     # Process the CSV file
     result_df = process_medical_csv(input_file, output_file)

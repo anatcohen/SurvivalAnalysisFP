@@ -9,7 +9,7 @@ import SimpleITK as sitk
 matplotlib.use('TkAgg')
 
 # Loading CSV with patient IDs and DICOM paths
-data_dir = "../data"
+data_dir = "../../data"
 df = pd.read_csv(os.path.join(data_dir, "CT_RTSTRUCT_locations.csv"))
 
 patient_ind = 0
