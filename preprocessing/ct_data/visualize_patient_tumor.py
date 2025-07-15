@@ -50,6 +50,11 @@ reader.SetFileNames(series)
 ct_image = reader.Execute()
 ct_array = sitk.GetArrayFromImage(ct_image)
 
+# Apply contrast enhancement by clipping pixel values
+print(f"\nOriginal CT array range: [{ct_array.min()}, {ct_array.max()}]")
+ct_array = np.clip(ct_array, -1000, 400)
+print(f"Enhanced CT array range: [{ct_array.min()}, {ct_array.max()}]")
+
 # Get image spacing and origin for proper coordinate transformation
 spacing = np.array(ct_image.GetSpacing())
 origin = np.array(ct_image.GetOrigin())
