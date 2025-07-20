@@ -6,18 +6,20 @@ import matplotlib
 import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
+from config.paths import DATA_DIR
+
 matplotlib.use('TkAgg')
 
 # Loading CSV with patient IDs and DICOM paths
-data_dir = "../../data"
-df = pd.read_csv(os.path.join(data_dir, "CT_RTSTRUCT_locations.csv"))
+
+df = pd.read_csv(os.path.join(DATA_DIR, "CT_RTSTRUCT_locations.csv"))
 
 patient_ind = 0
 subject_id = df['Subject ID'][patient_ind]
 
 # Construct full paths using os.path.join
-RTSTRUCT_loc = os.path.join(data_dir, df['RTSTRUCT Location'][patient_ind], '1-1.dcm')
-CT_loc = os.path.join(data_dir, df['CT Location'][patient_ind])
+RTSTRUCT_loc = os.path.join(DATA_DIR, df['RTSTRUCT Location'][patient_ind], '1-1.dcm')
+CT_loc = os.path.join(DATA_DIR, df['CT Location'][patient_ind])
 
 print(f"Subject ID: {subject_id}")
 print(f"RTSTRUCT Location: {RTSTRUCT_loc}")

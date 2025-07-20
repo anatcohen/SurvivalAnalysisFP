@@ -3,9 +3,10 @@ import numpy as np
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
 from matplotlib.widgets import Slider, RadioButtons
-import glob
+from skimage import measure
+
+from config.paths import DATA_DIR
 
 matplotlib.use('TkAgg')
 
@@ -37,7 +38,7 @@ class EnhancedTumorViewer:
         # Current display settings
         self.current_slice = self.ct_array.shape[0] // 2  # Start at middle
         self.current_axis = 0  # 0: axial, 1: coronal, 2: sagittal
-        self.display_mode = 'overlay'  # 'ct', 'mask', 'overlay', 'side_by_side'
+        self.display_mode = 'overlay'  # 'ct', 'mask', 'overlay', 'side_by_side', '3d'
 
         # Setup figure
         self.setup_figure()
@@ -52,13 +53,13 @@ class EnhancedTumorViewer:
         self.fig.canvas.manager.set_window_title(f"{self.subject_id} - Tumor Viewer")
 
         # Create grid for layout
-        gs = self.fig.add_gridspec(3, 2, height_ratios=[1, 8, 1], width_ratios=[1, 4])
+        self.gs = self.fig.add_gridspec(3, 2, height_ratios=[1, 8, 1], width_ratios=[1, 4])
 
         # Main display axes
-        self.ax_main = self.fig.add_subplot(gs[1, 1])
+        self.ax_main = self.fig.add_subplot(self.gs[1, 1])
 
         # Slice slider
-        self.ax_slider = self.fig.add_subplot(gs[2, 1])
+        self.ax_slider = self.fig.add_subplot(self.gs[2, 1])
         self.slice_slider = Slider(
             self.ax_slider, 'Slice',
             0, self.get_max_slice(),
@@ -69,16 +70,16 @@ class EnhancedTumorViewer:
         self.slice_slider.on_changed(self.on_slider_change)
 
         # Radio buttons for view mode
-        self.ax_radio_view = self.fig.add_subplot(gs[1, 0])
+        self.ax_radio_view = self.fig.add_subplot(self.gs[1, 0])
         self.radio_view = RadioButtons(
             self.ax_radio_view,
-            ('Overlay', 'CT Only', 'Mask Only', 'Side by Side'),
+            ('Overlay', 'CT Only', 'Mask Only', 'Side by Side', '3D View'),
             active=0
         )
         self.radio_view.on_clicked(self.on_view_change)
 
         # Radio buttons for axis
-        self.ax_radio_axis = self.fig.add_subplot(gs[0, 1])
+        self.ax_radio_axis = self.fig.add_subplot(self.gs[0, 1])
         self.radio_axis = RadioButtons(
             self.ax_radio_axis,
             ('Axial', 'Coronal', 'Sagittal'),
@@ -96,7 +97,7 @@ class EnhancedTumorViewer:
 
         # Instructions
         self.fig.text(0.5, 0.02,
-                      'Use arrow keys (↑↓) or slider to navigate | Q to quit',
+                      'Use arrow keys (↑↓) or slider to navigate | Q to quit | For 3D: drag to rotate',
                       ha='center', fontsize=10)
 
         # Connect events
@@ -123,8 +124,137 @@ class EnhancedTumorViewer:
 
         return ct_slice, mask_slice
 
+    def create_3d_view(self):
+        """Create 3D visualization of the tumor."""
+        # Clear main axis
+        self.ax_main.clear()
+        self.ax_main.axis('off')
+
+        # Create 3D subplot
+        if hasattr(self, 'ax_3d'):
+            self.ax_3d.remove()
+
+        self.ax_3d = self.fig.add_subplot(self.gs[1, 1], projection='3d')
+
+        # Create bounding box vertices
+        box_size = 64  # Assuming 64^3 cropping box
+        vertices = [
+            [0, 0, 0], [box_size, 0, 0], [box_size, box_size, 0], [0, box_size, 0],
+            [0, 0, box_size], [box_size, 0, box_size], [box_size, box_size, box_size], [0, box_size, box_size]
+        ]
+
+        # Define edges of the bounding box
+        edges = [
+            [0, 1], [1, 2], [2, 3], [3, 0],  # Bottom face
+            [4, 5], [5, 6], [6, 7], [7, 4],  # Top face
+            [0, 4], [1, 5], [2, 6], [3, 7]  # Vertical edges
+        ]
+
+        # Draw bounding box with pink/red lines like in the reference
+        for edge in edges:
+            points = [vertices[edge[0]], vertices[edge[1]]]
+            self.ax_3d.plot3D(*zip(*points), color='#FF6B6B', alpha=0.6, linewidth=2)
+
+        # Create tumor surface using marching cubes
+        try:
+            # Use marching cubes to get surface mesh
+            verts, faces, _, _ = measure.marching_cubes(self.mask_array, level=0.5, spacing=(1, 1, 1))
+
+            # Plot the surface in green to match reference
+            self.ax_3d.plot_trisurf(verts[:, 2], verts[:, 1], verts[:, 0],
+                                    triangles=faces,
+                                    color='#2ECC40',  # Bright green
+                                    alpha=0.95,
+                                    shade=True,
+                                    edgecolor='none')
+        except:
+            # Fallback to voxel representation if marching cubes fails
+            tumor_coords = np.where(self.mask_array > 0)
+            if len(tumor_coords[0]) > 0:
+                # Use voxels for visualization
+                from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+                # Create cubes for each voxel
+                cubes = []
+                # Downsample for performance
+                max_voxels = 2000
+                if len(tumor_coords[0]) > max_voxels:
+                    indices = np.random.choice(len(tumor_coords[0]), max_voxels, replace=False)
+                    positions = [(tumor_coords[2][i], tumor_coords[1][i], tumor_coords[0][i])
+                                 for i in indices]
+                else:
+                    positions = [(tumor_coords[2][i], tumor_coords[1][i], tumor_coords[0][i])
+                                 for i in range(len(tumor_coords[0]))]
+
+                for pos in positions:
+                    x, y, z = pos
+                    # Create vertices for a small cube
+                    r = 0.45  # cube radius
+                    cube_verts = [
+                        [x - r, y - r, z - r], [x + r, y - r, z - r], [x + r, y + r, z - r], [x - r, y + r, z - r],
+                        # bottom
+                        [x - r, y - r, z + r], [x + r, y - r, z + r], [x + r, y + r, z + r], [x - r, y + r, z + r]
+                        # top
+                    ]
+
+                    # Define the 6 faces of the cube
+                    cube_faces = [
+                        [cube_verts[0], cube_verts[1], cube_verts[2], cube_verts[3]],  # bottom
+                        [cube_verts[4], cube_verts[5], cube_verts[6], cube_verts[7]],  # top
+                        [cube_verts[0], cube_verts[1], cube_verts[5], cube_verts[4]],  # front
+                        [cube_verts[2], cube_verts[3], cube_verts[7], cube_verts[6]],  # back
+                        [cube_verts[0], cube_verts[3], cube_verts[7], cube_verts[4]],  # left
+                        [cube_verts[1], cube_verts[2], cube_verts[6], cube_verts[5]]  # right
+                    ]
+                    cubes.extend(cube_faces)
+
+                # Create collection and add to plot
+                cube_collection = Poly3DCollection(cubes, facecolors='#2ECC40',
+                                                   edgecolors='#27AE60', alpha=0.95, linewidth=0.05)
+                self.ax_3d.add_collection3d(cube_collection)
+
+        # Remove all axis elements for clean look
+        self.ax_3d.set_axis_off()
+
+        # Set equal aspect ratio and limits
+        self.ax_3d.set_xlim([0, box_size])
+        self.ax_3d.set_ylim([0, box_size])
+        self.ax_3d.set_zlim([0, box_size])
+
+        # Set viewing angle similar to reference
+        self.ax_3d.view_init(elev=15, azim=30)
+
+        # Add title
+        self.ax_3d.text2D(0.5, 0.95, '3D Tumor Visualization',
+                          transform=self.ax_3d.transAxes,
+                          ha='center', va='top', fontsize=14)
+
+        # Set white background
+        self.ax_3d.xaxis.pane.fill = False
+        self.ax_3d.yaxis.pane.fill = False
+        self.ax_3d.zaxis.pane.fill = False
+
+        # Hide slice controls
+        self.ax_slider.set_visible(False)
+        self.ax_radio_axis.set_visible(False)
+
     def update_display(self):
         """Update the displayed image."""
+        # Clean up 3D elements if switching from 3D view
+        if hasattr(self, 'ax_3d') and self.display_mode != '3d':
+            self.ax_3d.remove()
+            delattr(self, 'ax_3d')
+            # Recreate main axis
+            self.ax_main = self.fig.add_subplot(self.gs[1, 1])
+            # Show slice controls
+            self.ax_slider.set_visible(True)
+            self.ax_radio_axis.set_visible(True)
+
+        if self.display_mode == '3d':
+            self.create_3d_view()
+            self.fig.canvas.draw_idle()
+            return
+
         self.ax_main.clear()
 
         ct_slice, mask_slice = self.get_current_slice_data()
@@ -186,6 +316,12 @@ class EnhancedTumorViewer:
 
     def on_key(self, event):
         """Handle keyboard events."""
+        # Don't process arrow keys in 3D view
+        if self.display_mode == '3d':
+            if event.key == 'q':
+                plt.close(self.fig)
+            return
+
         if event.key == 'up':
             self.current_slice = min(self.current_slice + 1, self.get_max_slice())
             self.slice_slider.set_val(self.current_slice)
@@ -204,6 +340,10 @@ class EnhancedTumorViewer:
 
     def on_scroll(self, event):
         """Handle mouse scroll events."""
+        # Don't process scroll events in 3D view
+        if self.display_mode == '3d':
+            return
+
         if event.button == 'up':
             self.current_slice = min(self.current_slice + 1, self.get_max_slice())
         else:
@@ -221,7 +361,8 @@ class EnhancedTumorViewer:
             'Overlay': 'overlay',
             'CT Only': 'ct',
             'Mask Only': 'mask',
-            'Side by Side': 'side_by_side'
+            'Side by Side': 'side_by_side',
+            '3D View': '3d'
         }
         self.display_mode = mode_map[label]
 
@@ -251,12 +392,12 @@ class EnhancedTumorViewer:
 
 
 if __name__ == "__main__":
-    data_dir = "../../data"
-    cropped_data_dir = "../../data/processed_data_physical"
+    data_dir = DATA_DIR
+    cropped_data_dir = os.path.join(DATA_DIR, 'processed_data_physical')
 
     df = pd.read_csv(os.path.join(data_dir, "CT_RTSTRUCT_locations.csv"))
 
-    patient_ind = 0
+    patient_ind = 13
     subject_id = df['Subject ID'][patient_ind]
 
     data_path = os.path.join(cropped_data_dir, subject_id + '_processed.npz')

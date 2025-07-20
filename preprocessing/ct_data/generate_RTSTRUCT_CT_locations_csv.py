@@ -1,4 +1,6 @@
+import os
 import pandas as pd
+from config.paths import DATA_DIR
 
 def process_medical_csv(input_file, output_file):
     """
@@ -90,14 +92,14 @@ def process_medical_csv(input_file, output_file):
 
 # Example usage
 if __name__ == "__main__":
-    input_file = "../../data/CT_metadata.csv"
-    output_file = "../../data/CT_RTSTRUCT_locations.csv"
+    input_file = os.path.join(DATA_DIR, 'CT_metadata.csv')
+    output_file = os.path.join(DATA_DIR, 'CT_RTSTRUCT_locations.csv')
 
     # Process the CSV file
     result_df = process_medical_csv(input_file, output_file)
 
     if result_df is not None:
         pd.set_option('display.width', None)
-        print(result_df.head())
+        print(result_df)
     else:
         print("\nNo data found. Exiting...")

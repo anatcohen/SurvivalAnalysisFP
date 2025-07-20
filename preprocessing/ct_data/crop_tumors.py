@@ -7,6 +7,8 @@ from skimage.draw import polygon
 from scipy.ndimage import binary_dilation, zoom
 import warnings
 
+from config.paths import DATA_DIR
+
 warnings.filterwarnings('ignore')
 
 
@@ -127,7 +129,7 @@ def process_patient_physical(RTSTRUCT_loc, CT_loc, box_size_mm=(120, 120, 120),
     mask = create_mask_from_contours(contour_data, ct_array.shape, spacing, origin)
 
     # Apply slight dilation to ensure we capture tumor boundaries
-    mask = binary_dilation(mask, iterations=2)
+    mask = binary_dilation(mask, iterations=4)
 
     # Find tumor bounding box in physical coordinates
     z_indices, y_indices, x_indices = np.where(mask)
@@ -199,17 +201,10 @@ def process_patient_physical(RTSTRUCT_loc, CT_loc, box_size_mm=(120, 120, 120),
     final_ct = zoom(resampled_ct, zoom_factors, order=1)
     final_mask = zoom(resampled_mask, zoom_factors, order=0) > 0.5
 
-    # Normalize CT values
-    # Clip to body window
     final_ct = np.clip(final_ct, -1000, 400)
 
-    # Option 1: Simple normalization to [-1, 1]
+    # Option 1: Simple normalization to [0, 1]
     final_ct = (final_ct + 1000) / 1400
-
-    # Option 2: Z-score normalization (uncomment if preferred)
-    # mean_hu = -200  # Approximate mean for body
-    # std_hu = 300    # Approximate std for body
-    # final_ct = (final_ct - mean_hu) / std_hu
 
     return {
         'ct': final_ct.astype(np.float32),
@@ -223,11 +218,10 @@ def process_patient_physical(RTSTRUCT_loc, CT_loc, box_size_mm=(120, 120, 120),
 
 def main():
     """Main processing loop with error handling and progress tracking."""
-    data_dir = "../../data"
-    df = pd.read_csv(os.path.join(data_dir, "CT_RTSTRUCT_locations.csv"))
+    df = pd.read_csv(os.path.join(DATA_DIR, "CT_RTSTRUCT_locations.csv"))
 
     # Create output directory
-    output_dir = os.path.join(data_dir, "processed_data_physical")
+    output_dir = os.path.join(DATA_DIR, "processed_data_physical")
     os.makedirs(output_dir, exist_ok=True)
 
     # Processing parameters
@@ -250,8 +244,8 @@ def main():
 
     for idx in df.index:
         subject_id = df['Subject ID'][idx]
-        RTSTRUCT_loc = os.path.join(data_dir, df['RTSTRUCT Location'][idx], '1-1.dcm')
-        CT_loc = os.path.join(data_dir, df['CT Location'][idx])
+        RTSTRUCT_loc = os.path.join(DATA_DIR, df['RTSTRUCT Location'][idx], '1-1.dcm')
+        CT_loc = os.path.join(DATA_DIR, df['CT Location'][idx])
 
         try:
             print(f"\n[{idx + 1}/{len(df)}] Processing {subject_id}...")

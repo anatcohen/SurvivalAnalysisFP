@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import SimpleITK as sitk
 from tqdm import tqdm
 
+from config.paths import DATA_DIR, FIGURES_DIR
+
 
 def extract_tumor_dimensions(rtstruct_path, ct_path):
     """
@@ -168,7 +170,7 @@ def create_histograms(results_df, data_dir):
     plt.tight_layout()
 
     # Save the figure
-    output_path = os.path.join(data_dir, "tumor_dimensions_histograms.png")
+    output_path = os.path.join(FIGURES_DIR, "tumor_dimensions_histograms.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Saved histograms to {output_path}")
 
@@ -316,7 +318,7 @@ def create_aspect_ratio_analysis(results_df, data_dir):
     plt.tight_layout()
 
     # Save the figure
-    output_path = os.path.join(data_dir, "tumor_aspect_ratios.png")
+    output_path = os.path.join(FIGURES_DIR, "tumor_aspect_ratios.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"\nSaved aspect ratio analysis to {output_path}")
 
@@ -394,7 +396,7 @@ def create_aspect_ratio_analysis(results_df, data_dir):
 
 def main():
     # Set data directory
-    data_dir = "../../data"
+    data_dir = DATA_DIR
     csv_file = "CT_RTSTRUCT_locations.csv"
 
     # Analyze all patients
