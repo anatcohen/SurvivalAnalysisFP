@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
-import random
+import os
 
-def load_split_and_preprocess(path: str, train_prop: float = 0.6, val_prop: float = 0.2, test_prop: float = 0.2):
+from config.paths import DATA_DIR
+
+def load_split_and_preprocess(path: str, seed: int = 42, train_prop: float = 0.6, val_prop: float = 0.2, test_prop: float = 0.2):
     """
     Loads tabular data of clinical records, splits to train-val-test sets and preprocess it.
 
@@ -28,6 +30,7 @@ def load_split_and_preprocess(path: str, train_prop: float = 0.6, val_prop: floa
     raw_data.loc[raw_data['PatientID'] == 'LUNG1-272', 'Overall.Stage'] = 'llb'
 
     # Split into train
+    np.random.seed(seed)
     rows = raw_data.shape[0]
     train_ind = np.random.choice(rows, size=np.round(rows*train_prop).astype(int), replace=False)
     # Split remaining into val-test sets
@@ -64,13 +67,17 @@ def load_split_and_preprocess(path: str, train_prop: float = 0.6, val_prop: floa
 
     return train_df, val_df, test_df
 
-if __name__ == '__main__':
-    random.seed(10)
+def preprocess_data(seed=42):
+    train, val, test = load_split_and_preprocess(os.path.join(DATA_DIR, 'clinical_data.csv') , seed=seed)
 
-    train, val, test = load_split_and_preprocess('../../data/clinical_data.csv')
-    train.to_csv('../../data/preprocessed_clinical_data_train.csv', index=False)
-    val.to_csv('../../data/preprocessed_clinical_data_val.csv', index=False)
-    test.to_csv('../../data/preprocessed_clinical_data_test.csv', index=False)
+    train.to_csv(os.path.join(DATA_DIR, 'preprocessed_clinical_data_train.csv'), index=False)
+    val.to_csv(os.path.join(DATA_DIR, 'preprocessed_clinical_data_val.csv'), index=False)
+    test.to_csv(os.path.join(DATA_DIR, 'preprocessed_clinical_data_test.csv'), index=False)
+
+    return train, val, test
+
+if __name__ == '__main__':
+    train, val, test = preprocess_data()
 
     df = pd.concat([train, val, test])
     print(df)
