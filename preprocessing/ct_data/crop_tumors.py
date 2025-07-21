@@ -4,12 +4,15 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 from skimage.draw import polygon
-from scipy.ndimage import binary_dilation, zoom
+from scipy.ndimage import binary_dilation, zoom, rotate
 import warnings
 
 from config.paths import DATA_DIR
 
 warnings.filterwarnings('ignore')
+
+# Set fixed seed for reproducibility
+np.random.seed(42)
 
 
 def create_mask_from_contours(contour_data, ct_shape, spacing, origin):
@@ -75,6 +78,28 @@ def resample_volume(volume, original_spacing, target_spacing, is_mask=False):
     resampled = zoom(volume, zoom_factors, order=order)
 
     return resampled
+
+
+def apply_rotation_augmentation(masked_ct, angle_range=15):
+    """
+    Apply random 3D rotation to masked CT volume.
+
+    Args:
+        masked_ct: Masked CT volume (z, y, x)
+        angle_range: Maximum rotation angle in degrees
+
+    Returns:
+        Rotated masked CT volume
+    """
+    # Generate random rotation angles for each axis
+    angles = np.random.uniform(-angle_range, angle_range, 3)
+
+    # Apply rotation to masked CT (order=1 for linear interpolation)
+    rotated = rotate(masked_ct, angles[0], axes=(1, 2), reshape=False, order=1)
+    rotated = rotate(rotated, angles[1], axes=(0, 2), reshape=False, order=1)
+    rotated = rotate(rotated, angles[2], axes=(0, 1), reshape=False, order=1)
+
+    return rotated
 
 
 def process_patient_physical(RTSTRUCT_loc, CT_loc, box_size_mm=(120, 120, 120),
@@ -220,15 +245,19 @@ def main():
     """Main processing loop with error handling and progress tracking."""
     df = pd.read_csv(os.path.join(DATA_DIR, "CT_RTSTRUCT_locations.csv"))
 
-    # Create output directory
-    output_dir = os.path.join(DATA_DIR, "processed_data_physical")
+    # Create output directory for augmented data
+    output_dir = os.path.join(DATA_DIR, "CT_tumors_augmented")
+    crop_data_dir = os.path.join(DATA_DIR, 'processed_data_physical')
     os.makedirs(output_dir, exist_ok=True)
 
     # Processing parameters
-    # Based on tumor size analysis, adjust these:
-    box_size_mm = (120, 120, 120)  # Adjust based on your histogram analysis
+    box_size_mm = (120, 120, 120)
     output_size_voxels = (64, 64, 64)  # CNN input size
     target_spacing = (1.0, 1.0, 1.0)  # 1mm isotropic
+
+    # Augmentation parameters
+    num_augmentations = 4  # 1 original + 3 augmented
+    max_rotation_angle = 15  # degrees
 
     # Track statistics
     successful = 0
@@ -240,6 +269,9 @@ def main():
     print(f"  Box size: {box_size_mm} mm")
     print(f"  Output size: {output_size_voxels} voxels")
     print(f"  Target spacing: {target_spacing} mm")
+    print(f"  Augmentations per patient: {num_augmentations}")
+    print(f"  Max rotation angle: {max_rotation_angle}°")
+    print(f"  Random seed: 42")
     print("-" * 60)
 
     for idx in df.index:
@@ -260,16 +292,41 @@ def main():
 
             # Save processed data
             np.savez_compressed(
-                os.path.join(output_dir, f"{subject_id}_processed.npz"),
+                os.path.join(crop_data_dir, f"{subject_id}_processed.npz"),
                 ct=result['ct'],
                 mask=result['mask'],
                 tumor_size_mm=result['tumor_size_mm'],
                 tumor_center_mm=result['tumor_center_mm']
             )
 
+            ct = result['ct']
+            mask = result['mask']
+
+            # Create masked CT once
+            masked_ct = ct * mask
+
+            # Save augmented versions
+            for aug_idx in range(num_augmentations):
+                if aug_idx == 0:
+                    # Original (no rotation)
+                    aug_masked_ct = masked_ct
+                else:
+                    # Apply rotation augmentation to masked CT directly
+                    aug_masked_ct = apply_rotation_augmentation(masked_ct, max_rotation_angle)
+
+                # Save with appropriate filename
+                output_filename = f"{subject_id}_{aug_idx + 1}.npz"
+                output_path = os.path.join(output_dir, output_filename)
+
+                np.savez_compressed(
+                    output_path,
+                    masked_ct=aug_masked_ct.astype(np.float32)
+                )
+
+                print(f"  ✓ Saved augmentation {aug_idx + 1}/{num_augmentations}")
+
             tumor_sizes.append(result['tumor_size_mm'])
             successful += 1
-            print(f"  ✓ Saved successfully")
 
         except Exception as e:
             print(f"  ✗ Error: {str(e)}")

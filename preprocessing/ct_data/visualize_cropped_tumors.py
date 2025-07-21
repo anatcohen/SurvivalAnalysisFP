@@ -125,130 +125,171 @@ class EnhancedTumorViewer:
         return ct_slice, mask_slice
 
     def create_3d_view(self):
-        """Create 3D visualization of the tumor."""
+        """Create 3D visualization of the 4 augmented tumors."""
         # Clear main axis
         self.ax_main.clear()
         self.ax_main.axis('off')
 
-        # Create 3D subplot
-        if hasattr(self, 'ax_3d'):
-            self.ax_3d.remove()
+        # Hide the radio buttons for axis selection in 3D mode
+        self.ax_radio_axis.clear()
+        self.ax_radio_axis.axis('off')
 
-        self.ax_3d = self.fig.add_subplot(self.gs[1, 1], projection='3d')
+        # Clean up existing 3d axes if any
+        if hasattr(self, 'ax_3d_list'):
+            for ax in self.ax_3d_list:
+                ax.remove()
 
-        # Create bounding box vertices
-        box_size = 64  # Assuming 64^3 cropping box
-        vertices = [
-            [0, 0, 0], [box_size, 0, 0], [box_size, box_size, 0], [0, box_size, 0],
-            [0, 0, box_size], [box_size, 0, box_size], [box_size, box_size, box_size], [0, box_size, box_size]
+        # Create 4 subplots for the 4 augmented versions with tighter spacing
+        self.ax_3d_list = []
+        titles = ['Original', 'Augmented 1', 'Augmented 2', 'Augmented 3']
+
+        # Load augmented data
+        augmented_dir = os.path.join(DATA_DIR, "CT_tumors_augmented")
+
+        # Define custom positions for tighter layout
+        # [left, bottom, width, height]
+        subplot_width = 0.35
+        subplot_height = 0.35
+        h_spacing = -0.05  # Negative spacing for overlap
+        v_spacing = 0  # Negative spacing for overlap
+
+        # Center the grid but shift right to avoid left menu
+        total_width = 2 * subplot_width + h_spacing
+        total_height = 2 * subplot_height + v_spacing
+        left_offset = 0.55 - total_width / 2  # Shifted from 0.5 to 0.55
+        bottom_offset = 0.5 - total_height / 2 - 0.05  # Slight adjustment for title
+
+        positions = [
+            [left_offset, bottom_offset + subplot_height + v_spacing, subplot_width, subplot_height],  # Top left
+            [left_offset + subplot_width + h_spacing, bottom_offset + subplot_height + v_spacing, subplot_width,
+             subplot_height],  # Top right
+            [left_offset, bottom_offset, subplot_width, subplot_height],  # Bottom left
+            [left_offset + subplot_width + h_spacing, bottom_offset, subplot_width, subplot_height]  # Bottom right
         ]
 
-        # Define edges of the bounding box
-        edges = [
-            [0, 1], [1, 2], [2, 3], [3, 0],  # Bottom face
-            [4, 5], [5, 6], [6, 7], [7, 4],  # Top face
-            [0, 4], [1, 5], [2, 6], [3, 7]  # Vertical edges
-        ]
+        for idx, pos in enumerate(positions):
+            # Create subplot with custom position
+            ax_3d = self.fig.add_axes(pos, projection='3d')
+            self.ax_3d_list.append(ax_3d)
 
-        # Draw bounding box with pink/red lines like in the reference
-        for edge in edges:
-            points = [vertices[edge[0]], vertices[edge[1]]]
-            self.ax_3d.plot3D(*zip(*points), color='#FF6B6B', alpha=0.6, linewidth=2)
+            # Load augmented tumor data
+            aug_file = os.path.join(augmented_dir, f"{self.subject_id}_{idx + 1}.npz")
+            try:
+                aug_data = np.load(aug_file)
+                masked_ct = aug_data['masked_ct']
 
-        # Create tumor surface using marching cubes
-        try:
-            # Use marching cubes to get surface mesh
-            verts, faces, _, _ = measure.marching_cubes(self.mask_array, level=0.5, spacing=(1, 1, 1))
+                # Extract mask from masked CT (non-zero values)
+                mask = masked_ct > 0
 
-            # Plot the surface in green to match reference
-            self.ax_3d.plot_trisurf(verts[:, 2], verts[:, 1], verts[:, 0],
-                                    triangles=faces,
-                                    color='#2ECC40',  # Bright green
-                                    alpha=0.95,
-                                    shade=True,
-                                    edgecolor='none')
-        except:
-            # Fallback to voxel representation if marching cubes fails
-            tumor_coords = np.where(self.mask_array > 0)
-            if len(tumor_coords[0]) > 0:
-                # Use voxels for visualization
-                from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+                # Create bounding box vertices
+                box_size = 64  # 64^3 cropping box
+                vertices = [
+                    [0, 0, 0], [box_size, 0, 0], [box_size, box_size, 0], [0, box_size, 0],
+                    [0, 0, box_size], [box_size, 0, box_size], [box_size, box_size, box_size], [0, box_size, box_size]
+                ]
 
-                # Create cubes for each voxel
-                cubes = []
-                # Downsample for performance
-                max_voxels = 2000
-                if len(tumor_coords[0]) > max_voxels:
-                    indices = np.random.choice(len(tumor_coords[0]), max_voxels, replace=False)
-                    positions = [(tumor_coords[2][i], tumor_coords[1][i], tumor_coords[0][i])
-                                 for i in indices]
-                else:
-                    positions = [(tumor_coords[2][i], tumor_coords[1][i], tumor_coords[0][i])
-                                 for i in range(len(tumor_coords[0]))]
+                # Define edges of the bounding box
+                edges = [
+                    [0, 1], [1, 2], [2, 3], [3, 0],  # Bottom face
+                    [4, 5], [5, 6], [6, 7], [7, 4],  # Top face
+                    [0, 4], [1, 5], [2, 6], [3, 7]  # Vertical edges
+                ]
 
-                for pos in positions:
-                    x, y, z = pos
-                    # Create vertices for a small cube
-                    r = 0.45  # cube radius
-                    cube_verts = [
-                        [x - r, y - r, z - r], [x + r, y - r, z - r], [x + r, y + r, z - r], [x - r, y + r, z - r],
-                        # bottom
-                        [x - r, y - r, z + r], [x + r, y - r, z + r], [x + r, y + r, z + r], [x - r, y + r, z + r]
-                        # top
-                    ]
+                # Draw bounding box with pink/red lines
+                for edge in edges:
+                    points = [vertices[edge[0]], vertices[edge[1]]]
+                    ax_3d.plot3D(*zip(*points), color='#FF6B6B', alpha=0.6, linewidth=1.5)
 
-                    # Define the 6 faces of the cube
-                    cube_faces = [
-                        [cube_verts[0], cube_verts[1], cube_verts[2], cube_verts[3]],  # bottom
-                        [cube_verts[4], cube_verts[5], cube_verts[6], cube_verts[7]],  # top
-                        [cube_verts[0], cube_verts[1], cube_verts[5], cube_verts[4]],  # front
-                        [cube_verts[2], cube_verts[3], cube_verts[7], cube_verts[6]],  # back
-                        [cube_verts[0], cube_verts[3], cube_verts[7], cube_verts[4]],  # left
-                        [cube_verts[1], cube_verts[2], cube_verts[6], cube_verts[5]]  # right
-                    ]
-                    cubes.extend(cube_faces)
+                # Create tumor surface using marching cubes
+                try:
+                    # Use marching cubes to get surface mesh
+                    verts, faces, _, _ = measure.marching_cubes(mask, level=0.5, spacing=(1, 1, 1))
 
-                # Create collection and add to plot
-                cube_collection = Poly3DCollection(cubes, facecolors='#2ECC40',
-                                                   edgecolors='#27AE60', alpha=0.95, linewidth=0.05)
-                self.ax_3d.add_collection3d(cube_collection)
+                    # Plot the surface in green
+                    ax_3d.plot_trisurf(verts[:, 2], verts[:, 1], verts[:, 0],
+                                       triangles=faces,
+                                       color='#2ECC40',  # Bright green
+                                       alpha=0.95,
+                                       shade=True,
+                                       edgecolor='none')
+                except:
+                    # Fallback to voxel representation if marching cubes fails
+                    tumor_coords = np.where(mask > 0)
+                    if len(tumor_coords[0]) > 0:
+                        # Downsample for performance
+                        max_voxels = 500  # Less voxels per subplot
+                        if len(tumor_coords[0]) > max_voxels:
+                            indices = np.random.choice(len(tumor_coords[0]), max_voxels, replace=False)
+                            ax_3d.scatter(tumor_coords[2][indices],
+                                          tumor_coords[1][indices],
+                                          tumor_coords[0][indices],
+                                          c='#2ECC40', s=2, alpha=0.8)
+                        else:
+                            ax_3d.scatter(tumor_coords[2], tumor_coords[1], tumor_coords[0],
+                                          c='#2ECC40', s=2, alpha=0.8)
 
-        # Remove all axis elements for clean look
-        self.ax_3d.set_axis_off()
+                # Remove all axis elements for clean look
+                ax_3d.set_axis_off()
 
-        # Set equal aspect ratio and limits
-        self.ax_3d.set_xlim([0, box_size])
-        self.ax_3d.set_ylim([0, box_size])
-        self.ax_3d.set_zlim([0, box_size])
+                # Set equal aspect ratio and limits
+                ax_3d.set_xlim([0, box_size])
+                ax_3d.set_ylim([0, box_size])
+                ax_3d.set_zlim([0, box_size])
 
-        # Set viewing angle similar to reference
-        self.ax_3d.view_init(elev=15, azim=30)
+                # Set viewing angle - same for all subplots for better comparison
+                ax_3d.view_init(elev=20, azim=45)
 
-        # Add title
-        self.ax_3d.text2D(0.5, 0.95, '3D Tumor Visualization',
-                          transform=self.ax_3d.transAxes,
-                          ha='center', va='top', fontsize=14)
+                # Add title
+                ax_3d.text2D(0.5, 0.95, titles[idx],
+                             transform=ax_3d.transAxes,
+                             ha='center', va='top', fontsize=12, weight='bold')
 
-        # Set white background
-        self.ax_3d.xaxis.pane.fill = False
-        self.ax_3d.yaxis.pane.fill = False
-        self.ax_3d.zaxis.pane.fill = False
+                # Set white background
+                ax_3d.xaxis.pane.fill = False
+                ax_3d.yaxis.pane.fill = False
+                ax_3d.zaxis.pane.fill = False
 
-        # Hide slice controls
+            except Exception as e:
+                # If file not found or error, show empty box with error message
+                ax_3d.text2D(0.5, 0.5, f"Error loading\n{titles[idx]}",
+                             transform=ax_3d.transAxes,
+                             ha='center', va='center', fontsize=10, color='red')
+                ax_3d.set_axis_off()
+
+        # Hide slice controls and axis radio buttons
         self.ax_slider.set_visible(False)
         self.ax_radio_axis.set_visible(False)
+
+        # Update main title for 3D view
+        self.fig.suptitle(f"{self.subject_id} - Augmented Tumor Visualizations", fontsize=14)
 
     def update_display(self):
         """Update the displayed image."""
         # Clean up 3D elements if switching from 3D view
-        if hasattr(self, 'ax_3d') and self.display_mode != '3d':
-            self.ax_3d.remove()
-            delattr(self, 'ax_3d')
+        if hasattr(self, 'ax_3d_list') and self.display_mode != '3d':
+            for ax in self.ax_3d_list:
+                ax.remove()
+            delattr(self, 'ax_3d_list')
             # Recreate main axis
             self.ax_main = self.fig.add_subplot(self.gs[1, 1])
+            # Recreate and show axis radio buttons
+            self.ax_radio_axis = self.fig.add_subplot(self.gs[0, 1])
+            self.radio_axis = RadioButtons(
+                self.ax_radio_axis,
+                ('Axial', 'Coronal', 'Sagittal'),
+                active=self.current_axis,
+                activecolor='blue'
+            )
+            self.radio_axis.on_clicked(self.on_axis_change)
             # Show slice controls
             self.ax_slider.set_visible(True)
             self.ax_radio_axis.set_visible(True)
+            # Restore original title
+            title = f"{self.subject_id} - Processed Tumor Region"
+            if 'tumor_size_mm' in self.metadata:
+                size = self.metadata['tumor_size_mm']
+                title += f"\nTumor Size: {size[0]:.1f} × {size[1]:.1f} × {size[2]:.1f} mm"
+            self.fig.suptitle(title, fontsize=14)
 
         if self.display_mode == '3d':
             self.create_3d_view()
@@ -397,7 +438,7 @@ if __name__ == "__main__":
 
     df = pd.read_csv(os.path.join(data_dir, "CT_RTSTRUCT_locations.csv"))
 
-    patient_ind = 13
+    patient_ind = 4
     subject_id = df['Subject ID'][patient_ind]
 
     data_path = os.path.join(cropped_data_dir, subject_id + '_processed.npz')
