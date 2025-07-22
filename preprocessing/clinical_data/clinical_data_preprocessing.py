@@ -24,6 +24,7 @@ def load_split_and_preprocess(path: str, seed: int = 42, train_prop: float = 0.6
 
     # Load data
     raw_data = pd.read_csv(path)
+    raw_data = raw_data[~raw_data['PatientID'].isin(['LUNG1-128', 'LUNG1-246'])].reset_index(drop=True)
 
     # Fill in specific missing data
     raw_data.loc[raw_data['PatientID'] == 'LUNG1-085', 'clinical.T.Stage'] = 1.0

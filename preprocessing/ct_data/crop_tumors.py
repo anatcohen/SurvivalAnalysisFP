@@ -154,7 +154,7 @@ def process_patient_physical(RTSTRUCT_loc, CT_loc, box_size_mm=(120, 120, 120),
     mask = create_mask_from_contours(contour_data, ct_array.shape, spacing, origin)
 
     # Apply slight dilation to ensure we capture tumor boundaries
-    mask = binary_dilation(mask, iterations=4)
+    #mask = binary_dilation(mask, iterations=0)
 
     # Find tumor bounding box in physical coordinates
     z_indices, y_indices, x_indices = np.where(mask)
