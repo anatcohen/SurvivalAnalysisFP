@@ -98,7 +98,7 @@ class BasicBlock3D(nn.Module):
     """3D ResNet Basic Block"""
     expansion = 1
 
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, dropout_rate=0.4):
         super().__init__()
         self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=3,
                                stride=stride, padding=1, bias=False)
@@ -108,6 +108,7 @@ class BasicBlock3D(nn.Module):
                                stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm3d(out_channels)
         self.downsample = downsample
+        self.dropout = nn.Dropout3d(dropout_rate)
 
     def forward(self, x):
         residual = x
@@ -124,21 +125,23 @@ class BasicBlock3D(nn.Module):
 
         out += residual
         out = self.relu(out)
+        out = self.dropout(out)  # Apply dropout after activation
 
         return out
 
 
 class ResNet3D(nn.Module):
-    """3D ResNet for tumor feature extraction"""
+    """3D ResNet for tumor feature extraction with reduced capacity"""
 
-    def __init__(self, block, layers, in_channels=1, num_classes=128, width_multiplier=0.5):
+    def __init__(self, block, layers, in_channels=1, num_classes=64, width_multiplier=0.25, dropout_rate=0.4):
         """
         Args:
             block: Block type (BasicBlock3D or Bottleneck3D)
             layers: Number of blocks in each layer
             in_channels: Number of input channels
-            num_classes: Size of output features
-            width_multiplier: Factor to reduce channel widths (0.5 = half channels)
+            num_classes: Size of output features (reduced to 64)
+            width_multiplier: Factor to reduce channel widths (0.25 = quarter channels)
+            dropout_rate: Dropout rate for blocks
         """
         super().__init__()
 
@@ -152,11 +155,14 @@ class ResNet3D(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=3, stride=2, padding=1)
 
-        # ResNet layers with reduced channels
-        self.layer1 = self._make_layer(block, int(64 * width_multiplier), layers[0])
-        self.layer2 = self._make_layer(block, int(128 * width_multiplier), layers[1], stride=2)
-        self.layer3 = self._make_layer(block, int(256 * width_multiplier), layers[2], stride=2)
-        self.layer4 = self._make_layer(block, int(512 * width_multiplier), layers[3], stride=2)
+        # ResNet layers with reduced channels and dropout
+        self.layer1 = self._make_layer(block, int(64 * width_multiplier), layers[0], dropout_rate=dropout_rate)
+        self.layer2 = self._make_layer(block, int(128 * width_multiplier), layers[1], stride=2,
+                                       dropout_rate=dropout_rate)
+        self.layer3 = self._make_layer(block, int(256 * width_multiplier), layers[2], stride=2,
+                                       dropout_rate=dropout_rate)
+        self.layer4 = self._make_layer(block, int(512 * width_multiplier), layers[3], stride=2,
+                                       dropout_rate=dropout_rate)
 
         # Global average pooling and feature projection
         self.avgpool = nn.AdaptiveAvgPool3d(1)
@@ -165,7 +171,7 @@ class ResNet3D(nn.Module):
         # Initialize weights
         self._initialize_weights()
 
-    def _make_layer(self, block, out_channels, blocks, stride=1):
+    def _make_layer(self, block, out_channels, blocks, stride=1, dropout_rate=0.4):
         downsample = None
         if stride != 1 or self.in_channels != out_channels * block.expansion:
             downsample = nn.Sequential(
@@ -175,10 +181,10 @@ class ResNet3D(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.in_channels, out_channels, stride, downsample))
+        layers.append(block(self.in_channels, out_channels, stride, downsample, dropout_rate))
         self.in_channels = out_channels * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.in_channels, out_channels))
+            layers.append(block(self.in_channels, out_channels, dropout_rate=dropout_rate))
 
         return nn.Sequential(*layers)
 
@@ -209,18 +215,18 @@ class ResNet3D(nn.Module):
 
 
 def resnet18_3d(**kwargs):
-    """Constructs a 3D ResNet-18 model with reduced width."""
+    """Constructs a 3D ResNet-18 model with reduced width and dropout."""
     return ResNet3D(BasicBlock3D, [2, 2, 2, 2], **kwargs)
 
 
 class ClinicalFeatureExtractor(nn.Module):
-    """Simplified MLP for processing clinical features."""
+    """MLP for processing clinical features."""
 
-    def __init__(self, input_features=23, hidden_features=[32], output_features=32, dropout_rate=0.2):
+    def __init__(self, input_features=23, hidden_features=[32], output_features=32, dropout_rate=0.4):
         """
         Args:
             input_features: Number of input clinical features
-            hidden_features: List of hidden layer sizes (simplified to single layer)
+            hidden_features: List of hidden layer sizes
             output_features: Size of output features
             dropout_rate: Dropout rate for regularization
         """
@@ -251,42 +257,45 @@ class DeepMMSA(nn.Module):
 
     def __init__(self,
                  resnet_type='resnet18',
-                 image_features=128,
+                 image_features=64,  # Reduced from 128
                  clinical_input_features=23,
                  clinical_hidden_features=[32],
                  clinical_output_features=32,
-                 fusion_features=[128],
-                 width_multiplier=0.5):
+                 fusion_features=[64],  # Reduced from [128]
+                 width_multiplier=0.25,  # Reduced from 0.5
+                 fusion_dropout=0.5):  # Increased dropout for fusion
         """
         Args:
             resnet_type: Type of ResNet backbone
-            image_features: Size of image feature vector
+            image_features: Size of image feature vector (reduced to 64)
             clinical_input_features: Number of clinical input features
             clinical_hidden_features: Hidden layer sizes for clinical MLP
             clinical_output_features: Size of clinical feature vector
             fusion_features: Hidden layer sizes for fusion network
-            width_multiplier: Channel reduction factor for ResNet
+            width_multiplier: Channel reduction factor for ResNet (0.25)
+            fusion_dropout: Dropout rate for fusion network (0.5)
         """
         super().__init__()
 
-        # Image feature extractor (3D ResNet with reduced width)
+        # Image feature extractor (3D ResNet with reduced width and dropout)
         if resnet_type == 'resnet18':
             self.image_extractor = resnet18_3d(
                 num_classes=image_features,
-                width_multiplier=width_multiplier
+                width_multiplier=width_multiplier,
+                dropout_rate=0.4
             )
         else:
             raise ValueError(f"Unknown ResNet type: {resnet_type}")
 
-        # Clinical feature extractor (simplified)
+        # Clinical feature extractor with increased dropout
         self.clinical_extractor = ClinicalFeatureExtractor(
             input_features=clinical_input_features,
             hidden_features=clinical_hidden_features,
             output_features=clinical_output_features,
-            dropout_rate=0.2
+            dropout_rate=0.4
         )
 
-        # Fusion network (simplified)
+        # Fusion network with high dropout
         fusion_input = image_features + clinical_output_features
         layers = []
         prev_features = fusion_input
@@ -296,7 +305,7 @@ class DeepMMSA(nn.Module):
                 nn.Linear(prev_features, hidden_size),
                 nn.BatchNorm1d(hidden_size),
                 nn.ReLU(),
-                nn.Dropout(0.3)
+                nn.Dropout(fusion_dropout)
             ])
             prev_features = hidden_size
 
@@ -465,9 +474,9 @@ def train_survival_model(
         test_loader: DataLoader,
         num_epochs: int = 100,
         learning_rate: float = 1e-3,
-        weight_decay: float = 1e-4,
+        weight_decay: float = 1e-3,  # Increased from 1e-4
         device: str = 'cuda',
-        early_stopping_patience: int = 15,
+        early_stopping_patience: int = 10,  # Reduced from 15
         save_path: str = 'best_deepmmsa_model.pth'
 ) -> Dict:
     """
@@ -483,6 +492,7 @@ def train_survival_model(
 
     history = {
         'train_loss': [],
+        'train_c_index': [],
         'val_c_index': [],
         'test_c_index': [],
         'best_val_c_index': 0,
@@ -490,14 +500,19 @@ def train_survival_model(
     }
 
     print("Starting training...")
-    print("-" * 90)
-    print(f"{'Epoch':^10} | {'Train Loss':^12} | {'Val C-index':^12} | {'Test C-index':^12} | {'Best Val C-idx':^14}")
-    print("-" * 90)
+    print("-" * 110)
+    print(
+        f"{'Epoch':^10} | {'Train Loss':^12} | {'Train C-idx':^12} | {'Val C-index':^12} | {'Test C-index':^12} | {'Best Val C-idx':^14}")
+    print("-" * 110)
 
     for epoch in range(num_epochs):
         # Training
         train_loss = train_epoch(model, train_loader, optimizer, device)
         history['train_loss'].append(train_loss)
+
+        # Training C-index
+        train_c_index = evaluate(model, train_loader, device)
+        history['train_c_index'].append(train_c_index)
 
         # Validation
         val_c_index = evaluate(model, val_loader, device)
@@ -516,7 +531,7 @@ def train_survival_model(
 
         # Print progress
         print(
-            f"{epoch + 1:^10d} | {train_loss:^12.4f} | {val_c_index:^12.4f} | {test_c_index:^12.4f} | {history['best_val_c_index']:^14.4f}")
+            f"{epoch + 1:^10d} | {train_loss:^12.4f} | {train_c_index:^12.4f} | {val_c_index:^12.4f} | {test_c_index:^12.4f} | {history['best_val_c_index']:^14.4f}")
 
         # Learning rate scheduling
         scheduler.step(val_c_index)
@@ -526,7 +541,7 @@ def train_survival_model(
             print(f"\nEarly stopping at epoch {epoch + 1}")
             break
 
-    print("-" * 90)
+    print("-" * 110)
     print(f"Training completed! Best validation C-index: {history['best_val_c_index']:.4f}")
     print(f"Corresponding test C-index: {history['best_test_c_index']:.4f}")
 
@@ -627,15 +642,16 @@ def run_multiple_seeds(num_seeds=50, num_epochs=100, batch_size=8):
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
-        # Create optimized model
+        # Create optimized model with anti-overfitting measures
         model = DeepMMSA(
             resnet_type='resnet18',
-            image_features=128,
+            image_features=64,  # Reduced from 128
             clinical_input_features=num_clinical_features,
             clinical_hidden_features=[32],
             clinical_output_features=32,
-            fusion_features=[128],
-            width_multiplier=0.5
+            fusion_features=[64],  # Reduced from [128]
+            width_multiplier=0.25,  # Reduced from 0.5
+            fusion_dropout=0.5  # Increased dropout
         )
 
         # Train model
@@ -646,9 +662,9 @@ def run_multiple_seeds(num_seeds=50, num_epochs=100, batch_size=8):
             test_loader,
             num_epochs=num_epochs,
             learning_rate=1e-3,
-            weight_decay=1e-4,
+            weight_decay=1e-3,  # Increased from 1e-4
             device=device,
-            early_stopping_patience=15,
+            early_stopping_patience=10,  # Reduced from 15
             save_path=f'best_deepmmsa_model_seed_{seed}.pth'
         )
 
