@@ -222,7 +222,7 @@ def resnet18_3d(**kwargs):
 class ClinicalFeatureExtractor(nn.Module):
     """MLP for processing clinical features."""
 
-    def __init__(self, input_features=23, hidden_features=[32], output_features=32, dropout_rate=0.4):
+    def __init__(self, input_features=24, hidden_features=[32], output_features=32, dropout_rate=0.4):
         """
         Args:
             input_features: Number of input clinical features
@@ -258,7 +258,7 @@ class DeepMMSA(nn.Module):
     def __init__(self,
                  resnet_type='resnet18',
                  image_features=64,  # Reduced from 128
-                 clinical_input_features=23,
+                 clinical_input_features=24,
                  clinical_hidden_features=[32],
                  clinical_output_features=32,
                  fusion_features=[64],  # Reduced from [128]
