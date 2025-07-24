@@ -9,13 +9,14 @@ import matplotlib.pyplot as plt
 from lifelines.utils import concordance_index as lifelines_cindex
 from config.paths import DATA_DIR
 from preprocessing.clinical_data.clinical_data_preprocessing import preprocess_data
+from scipy.ndimage import rotate
 
 
 class SurvivalDataset(Dataset):
-    """Dataset for multi-modal survival analysis."""
+    """Dataset for multi-modal survival analysis with online augmentation."""
 
     def __init__(self, clinical_csv: str, processed_dir: str, mode='train',
-                 transform=None, clinical_transform=None):
+                 transform=None, clinical_transform=None, augmentation_prob=0.8):
         """
         Args:
             clinical_csv: Path to clinical data CSV
@@ -23,11 +24,14 @@ class SurvivalDataset(Dataset):
             transform: Optional transform for CT data
             mode: train/val/test
             clinical_transform: Optional transform for clinical data
+            augmentation_prob: Probability of applying augmentation in training
         """
         self.processed_dir = processed_dir
         self.transform = transform
         self.clinical_transform = clinical_transform
         self.mode = mode
+        self.augmentation_prob = augmentation_prob
+        self.augmentation = True if mode == 'train' else False
 
         # Load clinical data
         self.clinical_df = pd.read_csv(clinical_csv)
@@ -36,20 +40,12 @@ class SurvivalDataset(Dataset):
         # Cache available files for efficiency
         available_files = set(os.listdir(processed_dir))
 
-        # Get list of processed files
+        # Get list of processed files - only use original images now
         self.subject_ids = []
         for patient in self.clinical_df.index:
-            if mode == 'train':
-                for aug_id in range(1, 5):  # 4 augmentations per patient
-                    fname = f"{patient}_{aug_id}.npz"
-                    if fname in available_files:
-                        subject_id = f"{patient}_{aug_id}"
-                        self.subject_ids.append(subject_id)
-            else:
-                fname = f"{patient}_1.npz"  # only original non augmented is used
-                if fname in available_files:
-                    subject_id = f"{patient}_1"
-                    self.subject_ids.append(subject_id)
+            fname = f"{patient}_1.npz"  # only original non augmented is used
+            if fname in available_files:
+                self.subject_ids.append(patient)
 
         print(f"[{mode}] Found {len(self.subject_ids)} subjects with both imaging and clinical data")
 
@@ -60,19 +56,33 @@ class SurvivalDataset(Dataset):
         subject_id = self.subject_ids[idx]
 
         # Load imaging data
-        npz_path = os.path.join(self.processed_dir, f"{subject_id}.npz")
+        npz_path = os.path.join(self.processed_dir, f"{subject_id}_1.npz")
         data = np.load(npz_path)
         masked_ct = data['masked_ct']
 
         # Add channel dimension
         masked_ct = masked_ct[np.newaxis, ...]  # (1, D, H, W)
 
-        # Apply transform if provided
+        # Apply online augmentation for training
+        if self.mode == 'train' and self.augmentation and np.random.rand() < self.augmentation_prob:
+            angle_range = 15
+            angles = np.random.uniform(-angle_range, angle_range, 3)
+
+            # Apply rotation to masked CT (order=1 for linear interpolation)
+            rotated = rotate(masked_ct, angles[0], axes=(1, 2), reshape=False, order=1)
+            rotated = rotate(rotated, angles[1], axes=(0, 2), reshape=False, order=1)
+            masked_ct = rotate(rotated, angles[2], axes=(0, 1), reshape=False, order=1)
+
+            # Flip (50% prob on random axis)
+            if np.random.rand() < 0.5:
+                flip_axis = np.random.randint(1, 4)
+                masked_ct = np.flip(masked_ct, axis=flip_axis)
+
+        # Apply additional transform if provided
         if self.transform:
             masked_ct = self.transform(masked_ct)
 
-        subject_clinical_id = subject_id.rsplit('_', 1)[0]  # Augmented patients share clinical data
-        clinical_row = self.clinical_df.loc[subject_clinical_id]
+        clinical_row = self.clinical_df.loc[subject_id]
 
         # Extract survival information
         survival_time = clinical_row['Survival.time']
@@ -86,7 +96,7 @@ class SurvivalDataset(Dataset):
             clinical_features = self.clinical_transform(clinical_features)
 
         return {
-            'image': torch.FloatTensor(masked_ct),
+            'image': torch.FloatTensor(masked_ct.copy()),  # .copy() because flip returns a view
             'clinical': torch.FloatTensor(clinical_features),
             'survival_time': torch.FloatTensor([survival_time]),
             'event': torch.FloatTensor([event]),
@@ -210,15 +220,15 @@ def resnet18(**kwargs):
 
 
 class ClinicalFeatureExtractor(nn.Module):
-    """MLP for processing clinical features."""
+    """MLP for processing clinical features with increased dropout."""
 
-    def __init__(self, input_features=24, hidden_features=[32], output_features=32, dropout_rate=0.4):
+    def __init__(self, input_features=24, hidden_features=[32], output_features=16, dropout_rate=0.6):
         """
         Args:
             input_features: Number of input clinical features
             hidden_features: List of hidden layer sizes
-            output_features: Size of output features
-            dropout_rate: Dropout rate for regularization
+            output_features: Size of output features (reduced to 16)
+            dropout_rate: Dropout rate for regularization (increased to 0.6)
         """
         super().__init__()
 
@@ -247,26 +257,26 @@ class DeepMMSA_Med3D(nn.Module):
 
     def __init__(self,
                  med3d_weights_path='resnet_18_23dataset.pth',
-                 image_features=512,  # Med3D ResNet18 outputs 512 features
+                 image_features=256,  # Reduced from 512
                  clinical_input_features=24,
                  clinical_hidden_features=[32],
-                 clinical_output_features=32,
-                 fusion_features=[64],
-                 fusion_dropout=0.5):
+                 clinical_output_features=16,  # Reduced from 32
+                 fusion_features=[32],  # Reduced from [64]
+                 fusion_dropout=0.6):  # Increased from 0.5
         """
         Args:
             med3d_weights_path: Path to Med3D pre-trained weights
-            image_features: Size of image feature vector (512 for Med3D ResNet18)
+            image_features: Size of image feature vector (reduced to 256)
             clinical_input_features: Number of clinical input features
             clinical_hidden_features: Hidden layer sizes for clinical MLP
-            clinical_output_features: Size of clinical feature vector
-            fusion_features: Hidden layer sizes for fusion network
-            fusion_dropout: Dropout rate for fusion network
+            clinical_output_features: Size of clinical feature vector (reduced to 16)
+            fusion_features: Hidden layer sizes for fusion network (reduced to [32])
+            fusion_dropout: Dropout rate for fusion network (increased to 0.6)
         """
         super().__init__()
 
         # Image feature extractor using Med3D ResNet18
-        self.image_extractor = resnet18(num_classes=image_features, no_cuda=False)
+        self.image_extractor = resnet18(num_classes=512, no_cuda=False)
 
         # Load pre-trained Med3D weights
         if os.path.exists(med3d_weights_path):
@@ -290,21 +300,28 @@ class DeepMMSA_Med3D(nn.Module):
             # Load weights (strict=False to handle any minor architecture differences)
             self.image_extractor.load_state_dict(new_state_dict, strict=False)
             print("Med3D weights loaded successfully")
+
+            # Freeze early layers to prevent overfitting
+            for name, param in self.image_extractor.named_parameters():
+                if 'layer3' not in name and 'layer4' not in name and 'fc' not in name:
+                    param.requires_grad = False
+            print("Frozen early layers (conv1, layer1, layer2)")
+
         else:
             print(f"Warning: Med3D weights not found at {med3d_weights_path}. Using random initialization.")
 
         # Replace final FC layer to output desired feature size
         self.image_extractor.fc = nn.Linear(512, image_features)
 
-        # Clinical feature extractor
+        # Clinical feature extractor with increased dropout
         self.clinical_extractor = ClinicalFeatureExtractor(
             input_features=clinical_input_features,
             hidden_features=clinical_hidden_features,
             output_features=clinical_output_features,
-            dropout_rate=0.4
+            dropout_rate=0.6  # Increased from 0.4
         )
 
-        # Fusion network
+        # Fusion network with reduced size and increased dropout
         fusion_input = image_features + clinical_output_features
         layers = []
         prev_features = fusion_input
@@ -343,6 +360,7 @@ def cox_ph_loss(risk_scores: torch.Tensor,
                 eps: float = 1e-7) -> torch.Tensor:
     """
     Cox proportional hazards loss function (negative partial log-likelihood).
+    Normalized by the number of events to handle censoring.
 
     Args:
         risk_scores: Model predictions (log hazard ratios) [batch_size, 1]
@@ -351,7 +369,7 @@ def cox_ph_loss(risk_scores: torch.Tensor,
         eps: Small constant for numerical stability
 
     Returns:
-        Negative partial log-likelihood
+        Normalized negative partial log-likelihood
     """
     # Flatten tensors
     risk_scores = risk_scores.view(-1)
@@ -376,8 +394,12 @@ def cox_ph_loss(risk_scores: torch.Tensor,
     # Only include events (not censored)
     log_likelihood = log_likelihood * events
 
-    # Return negative log likelihood
-    return -torch.sum(log_likelihood)
+    # Normalize by number of events to handle censoring
+    num_events = torch.sum(events)
+    if num_events > 0:
+        return -torch.sum(log_likelihood) / num_events
+    else:
+        return torch.tensor(0.0, device=risk_scores.device)
 
 
 class EarlyStopping:
@@ -483,7 +505,7 @@ def train_survival_model(
         test_loader: DataLoader,
         num_epochs: int = 100,
         learning_rate: float = 1e-3,
-        weight_decay: float = 1e-3,
+        weight_decay: float = 1e-2,  # Increased from 1e-3
         device: str = 'cuda',
         early_stopping_patience: int = 10,
         save_path: str = 'best_deepmmsa_med3d_model.pth'
@@ -607,7 +629,7 @@ def get_dataset_info(dataset):
     return sample['clinical'].shape[0]
 
 
-def run_multiple_seeds(num_seeds=50, num_epochs=100, batch_size=8, med3d_weights_path='resnet_18_23dataset.pth'):
+def run_multiple_seeds(num_seeds=50, num_epochs=100, batch_size=32, med3d_weights_path='resnet_18_23dataset.pth'):
     """Run training with multiple random seeds for robust evaluation."""
 
     train_ci_scores = []
@@ -638,31 +660,31 @@ def run_multiple_seeds(num_seeds=50, num_epochs=100, batch_size=8, med3d_weights
         val_path = os.path.join(DATA_DIR, 'preprocessed_clinical_data_val.csv')
         test_path = os.path.join(DATA_DIR, 'preprocessed_clinical_data_test.csv')
 
-        # Create datasets
-        train_dataset = SurvivalDataset(train_path, ct_path, mode='train')
+        # Create datasets with online augmentation
+        train_dataset = SurvivalDataset(train_path, ct_path, mode='train', augmentation_prob=0.8)
         val_dataset = SurvivalDataset(val_path, ct_path, mode='val')
         test_dataset = SurvivalDataset(test_path, ct_path, mode='test')
 
         # Get number of clinical features
         num_clinical_features = get_dataset_info(train_dataset) if seed == 0 else train_dataset[0]['clinical'].shape[0]
 
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        # Create dataloaders with larger batch size
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-        # Create model with Med3D pre-trained weights
+        # Create model with Med3D pre-trained weights and reduced architecture
         model = DeepMMSA_Med3D(
             med3d_weights_path=med3d_weights_path,
-            image_features=512,  # Med3D ResNet18 feature size
+            image_features=256,  # Reduced from 512
             clinical_input_features=num_clinical_features,
             clinical_hidden_features=[32],
-            clinical_output_features=32,
-            fusion_features=[64],
-            fusion_dropout=0.5
+            clinical_output_features=16,  # Reduced from 32
+            fusion_features=[32],  # Reduced from [64]
+            fusion_dropout=0.6  # Increased from 0.5
         )
 
-        # Train model
+        # Train model with increased weight decay
         history = train_survival_model(
             model,
             train_loader,
@@ -670,9 +692,9 @@ def run_multiple_seeds(num_seeds=50, num_epochs=100, batch_size=8, med3d_weights
             test_loader,
             num_epochs=num_epochs,
             learning_rate=1e-3,
-            weight_decay=1e-3,
+            weight_decay=1e-2,  # Increased from 1e-3
             device=device,
-            early_stopping_patience=30,
+            early_stopping_patience=10,  # Changed from 30 to 10
             save_path=f'best_deepmmsa_med3d_model_seed_{seed}.pth'
         )
 
@@ -710,4 +732,4 @@ if __name__ == "__main__":
     # Specify the path to Med3D pre-trained weights
     # Download from: https://drive.google.com/file/d/1399AsrYpQDi1vq6ciKRQkfknLsQQyigM/view?usp=sharing
     med3d_weights_path = os.path.join(DATA_DIR, 'resnet_18_23dataset.pth')
-    run_multiple_seeds(med3d_weights_path=med3d_weights_path)
+    run_multiple_seeds(med3d_weights_path=med3d_weights_path, batch_size=32)
