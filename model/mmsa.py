@@ -10,6 +10,8 @@ from lifelines.utils import concordance_index as lifelines_cindex
 from config.paths import DATA_DIR
 from preprocessing.clinical_data.clinical_data_preprocessing import preprocess_data
 
+import sys
+import datetime
 
 class SurvivalDataset(Dataset):
     """Dataset for multi-modal survival analysis."""
@@ -698,4 +700,9 @@ def run_multiple_seeds(num_seeds=50, num_epochs=100, batch_size=8):
     print(f"  Range: [{np.min(test_ci_scores):.4f}, {np.max(test_ci_scores):.4f}]")
 
 if __name__ == "__main__":
+    file_name = str(datetime.date.today())
+    des = 'Weights of first layers are constant and added online augmentation on train data.'
+    sys.stdout = open(f'../logs/{file_name}.txt', 'w')
     run_multiple_seeds()
+    print(f'Date: {file_name}')
+    print(f'Description: {des}')
